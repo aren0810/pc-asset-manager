@@ -1,6 +1,8 @@
 <div class="heading"><h1>資産一覧</h1><a class="button" href="/assets/new">＋ 新規登録</a></div>
 $message
-<form method="get" action="/" class="search"><label for="q">管理番号・利用者・機種名で検索</label><div><input id="q" name="q" value="$query" placeholder="例：PC-001、山田、ThinkPad"><button type="submit">検索</button><a href="/">クリア</a></div></form>
+<p><a href="$export_url">絞り込んだ全件をCSV出力</a> ／ <a href="/assets/import">CSVインポート</a> ／ <a href="/history">全変更履歴（削除済みを含む）</a></p>
+<form method="get" action="/" class="search"><label for="q">管理番号・利用者・機種名で検索</label><div><input id="q" name="q" value="$query" placeholder="例：PC-001、山田、ThinkPad"><button type="submit">検索</button><a href="/">クリア</a></div><div class="filters">$filters</div></form>
 <p>検索結果：$count 件</p>
-<div class="table-wrap"><table><thead><tr><th>管理番号</th><th>メーカー</th><th>機種名</th><th>利用者</th><th>部署</th><th>設置場所</th><th>状態</th><th>操作</th></tr></thead><tbody>$rows</tbody></table></div>
+<div class="table-wrap"><table><thead><tr><th>管理番号</th><th>メーカー</th><th>機種名</th><th>利用者</th><th>部署</th><th>設置場所</th><th>状態</th><th>保証警告</th><th>操作</th></tr></thead><tbody>$rows</tbody></table></div>
+<p>$pagination</p>
 <p class="muted">資産の全項目・登録日時・更新日時は「編集」から確認できます。</p>

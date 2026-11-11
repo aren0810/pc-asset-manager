@@ -37,8 +37,12 @@ class AppTest(unittest.TestCase):
         self.server.server_close()
         self.temp.cleanup()
 
-    def request(self, path='/', values=None):
+    def request(self, path='/', values=None, csv_file=None):
         data = None if values is None else urlencode(values).encode()
+        content_type = 'application/x-www-form-urlencoded'
+        if csv_file is not None:
+            content_type = 'multipart/form-data; boundary=asset-test-boundary'
+            data = ('--asset-test-boundary\r\nContent-Disposition: form-data; name="csrf_token"\r\n\r\n' + app.CSRF_TOKEN + '\r\n--asset-test-boundary\r\nContent-Disposition: form-data; name="csv"; filename="assets.csv"\r\nContent-Type: text/csv\r\n\r\n').encode() + csv_file + b'\r\n--asset-test-boundary--\r\n'
         if self.offline:
             class LocalRequest:
                 def __init__(self, raw):
@@ -51,7 +55,7 @@ class AppTest(unittest.TestCase):
             method = 'GET' if data is None else 'POST'
             raw = f'{method} {path} HTTP/1.0\r\nHost: localhost\r\n'.encode()
             if data is not None:
-                raw += f'Content-Length: {len(data)}\r\nContent-Type: application/x-www-form-urlencoded\r\n'.encode()
+                raw += f'Content-Length: {len(data)}\r\nContent-Type: {content_type}\r\n'.encode()
             request = LocalRequest(raw + b'\r\n' + (data or b''))
             app.Handler(request, ('127.0.0.1', 12345), self.server)
             headers, body = request.writer.getvalue().split(b'\r\n\r\n', 1)
@@ -61,7 +65,7 @@ class AppTest(unittest.TestCase):
                 return self.request(location)
             return status, body.decode()
         try:
-            with urlopen(Request(self.base + path, data=data), timeout=5) as response:
+            with urlopen(Request(self.base + path, data=data, headers={'Content-Type':content_type}), timeout=5) as response:
                 return response.status, response.read().decode()
         except HTTPError as error:
             return error.code, error.read().decode()
@@ -89,7 +93,7 @@ class AppTest(unittest.TestCase):
             self.assertTrue(asset['created_at'])
         edit_url = f'/assets/{asset_id}/edit'
         self.assertIn('&lt;script&gt;', self.request(edit_url)[1])
-        self.assertIn('資産を更新しました', self.request(edit_url, self.values(user_name='確認担当', status='使用中'))[1])
+        self.assertIn('資産を更新しました', self.request(edit_url, self.values(user_name='確認担当', status='使用中', version=asset['updated_at']))[1])
         self.assertIn('確認担当', self.request('/?' + urlencode({'q': '確認担当'}))[1])
         db.initialize(self.path)
         with db.connect(self.path) as connection:
@@ -99,7 +103,9 @@ class AppTest(unittest.TestCase):
         self.assertIn('削除の確認', self.request(delete_url)[1])
         with db.connect(self.path) as connection:
             self.assertEqual(len(db.list_assets(connection)), 6)
-        self.assertIn('資産を削除しました', self.request(delete_url, {'csrf_token': app.CSRF_TOKEN})[1])
+        with db.connect(self.path) as connection:
+            version = connection.execute('SELECT updated_at FROM assets WHERE id=?', (asset_id,)).fetchone()[0]
+        self.assertIn('資産を削除しました', self.request(delete_url, {'csrf_token': app.CSRF_TOKEN, 'version': version})[1])
         self.assertEqual(self.request(edit_url)[0], 404)
         self.assertEqual(self.request(delete_url, {'csrf_token': app.CSRF_TOKEN})[0], 404)
 

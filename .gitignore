@@ -2,3 +2,6 @@ __pycache__/
 *.pyc
 data/*.sqlite3
 codex_day1.log
+codex_phase2.log
+
+data/backups/

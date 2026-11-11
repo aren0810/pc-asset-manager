@@ -1,6 +1,8 @@
 """SQLite の初期化と資産データへのアクセス。"""
 import sqlite3
-from contextlib import contextmanager
+import json
+from datetime import datetime, timezone
+from contextlib import contextmanager, closing
 from pathlib import Path
 
 ROOT = Path(__file__).resolve().parent
@@ -43,6 +45,13 @@ def initialize(path=DB_PATH):
             created_at TEXT NOT NULL DEFAULT (strftime('%Y-%m-%d %H:%M:%f','now')),
             updated_at TEXT NOT NULL DEFAULT (strftime('%Y-%m-%d %H:%M:%f','now'))
         )''')
+        connection.execute('''CREATE TABLE IF NOT EXISTS asset_history (
+            id INTEGER PRIMARY KEY, asset_id INTEGER NOT NULL,
+            action TEXT NOT NULL, before_json TEXT NOT NULL, after_json TEXT NOT NULL,
+            changed_at TEXT NOT NULL DEFAULT (strftime('%Y-%m-%d %H:%M:%f','now'))
+        )''')
+        connection.execute('CREATE INDEX IF NOT EXISTS history_asset ON asset_history(asset_id, id)')
+        connection.execute('PRAGMA user_version=2')
         if not exists:
             samples = [
                 ('PC-001', 'Lenovo', 'ThinkPad T14', 'DEMO-L001', 'Windows 11 Pro', '2025-04-01', '2028-03-31', '山田 太郎', '営業部', '東京本社 2F', '使用中', '営業用。サンプルデータ（架空）。'),
@@ -60,3 +69,45 @@ def list_assets(connection, query=''):
     return connection.execute("""SELECT * FROM assets WHERE
         asset_number LIKE ? ESCAPE '!' OR user_name LIKE ? ESCAPE '!' OR model LIKE ? ESCAPE '!'
         ORDER BY asset_number""", (pattern, pattern, pattern)).fetchall()
+
+
+def backup(path=DB_PATH):
+    """起動前の整合した日次コピーを7世代保持。失敗時は起動を中止する。"""
+    from datetime import date
+    import os
+    path = Path(path)
+    if not path.exists():
+        return
+    folder = path.parent / 'backups'
+    folder.mkdir(exist_ok=True)
+    target = folder / f'{path.stem}-{date.today().isoformat()}.sqlite3'
+    if not target.exists():
+        temporary = target.with_suffix('.tmp')
+        try:
+            with closing(sqlite3.connect(path)) as source, closing(sqlite3.connect(temporary)) as dest:
+                source.backup(dest)
+            os.replace(temporary, target)
+        finally:
+            temporary.unlink(missing_ok=True)
+    for old in sorted(folder.glob(f'{path.stem}-????-??-??.sqlite3'), reverse=True)[7:]:
+        old.unlink()
+
+
+def history(connection, asset_id, action, before, after):
+    connection.execute('INSERT INTO asset_history(asset_id, action, before_json, after_json) VALUES (?,?,?,?)',
+                       (asset_id, action, json.dumps(before, ensure_ascii=False), json.dumps(after, ensure_ascii=False)))
+
+
+def save(connection, values, previous=None):
+    if previous is None:
+        # 削除後もIDを再利用せず、履歴と別資産の混同を防ぐ。
+        asset_id = connection.execute('SELECT max(n)+1 FROM (SELECT coalesce(max(id),0) n FROM assets UNION ALL SELECT coalesce(max(asset_id),0) FROM asset_history)').fetchone()[0]
+        connection.execute(f"INSERT INTO assets (id,{','.join(FIELDS)}) VALUES (?,{','.join('?' for _ in FIELDS)})", (asset_id, *values.values()))
+    else:
+        asset_id = previous['id']
+        if all(previous[k] == values[k] for k in FIELDS):
+            return asset_id
+        connection.execute(f"UPDATE assets SET {','.join(k+'=?' for k in FIELDS)}, updated_at=? WHERE id=?", (*values.values(), datetime.now(timezone.utc).isoformat(timespec='microseconds'), asset_id))
+    history(connection, asset_id, '登録' if previous is None else '更新',
+            {} if previous is None else {k: previous[k] for k in FIELDS}, values)
+    return asset_id
